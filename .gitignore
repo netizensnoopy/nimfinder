@@ -1,0 +1,7 @@
+# Nim specific ignores
+nimcache/
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
