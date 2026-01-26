@@ -12,6 +12,7 @@ A lightweight, cross-platform GUI tool built with Nim for converting images to J
 
 ## Requirements
 
+- [Nim](https://nim-lang.org/) (to build from source).
 - [libjxl](https://github.com/libjxl/libjxl) (`cjxl` and `djxl` must be in your system PATH).
 
 ## Build
