@@ -2,13 +2,14 @@
 ## A cross-platform tool for converting images to JPEG XL and viewing JXL files
 
 import nigui
-import std/[os, osproc, strutils, strformat]
+import std/[os, osproc, strutils, strformat, hashes]
 
 # Constants
 const
   AppTitle = "NimFinder - JXL Image Tool"
   DefaultQuality = 85
-  SupportedInputFormats = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ppm", ".pgm"]
+  SupportedInputFormats = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ppm",
+      ".pgm", ".webp"]
   JxlExtension = ".jxl"
 
 # Global state
@@ -18,11 +19,12 @@ var
   qualityValue: int = DefaultQuality
   loadedImage: Image = nil
 
-# Check if libjxl tools are available
+# Check if libjxl tools are available (cross-platform)
 proc checkJxlTools(): bool =
+  let nullDevice = if defined(windows): "nul" else: "/dev/null"
   try:
-    let cjxlResult = execCmd("cjxl --version >nul 2>&1")
-    let djxlResult = execCmd("djxl --version >nul 2>&1")
+    let cjxlResult = execCmd("cjxl --version >" & nullDevice & " 2>&1")
+    let djxlResult = execCmd("djxl --version >" & nullDevice & " 2>&1")
     result = cjxlResult == 0 and djxlResult == 0
   except OSError:
     result = false
@@ -31,9 +33,15 @@ proc checkJxlTools(): bool =
 proc convertToJxl(inputPath: string, quality: int): tuple[success: bool,
     outputPath: string, message: string] =
   let outputPath = inputPath.changeFileExt(JxlExtension)
-  let qualityArg = "-q " & $quality
-  let cmd = "cjxl " & quoteShell(inputPath) & " " & quoteShell(outputPath) &
-      " " & qualityArg
+
+  # Check if output already exists
+  if fileExists(outputPath):
+    result = (false, "", "Output file already exists: " & outputPath)
+    return
+
+  # Disable lossless JPEG transcoding when quality < 100 to allow lossy compression
+  let losslessFlag = if quality < 100: "--lossless_jpeg=0 " else: ""
+  let cmd = fmt"cjxl {losslessFlag}-q {quality} {quoteShell(inputPath)} {quoteShell(outputPath)}"
 
   let (output, exitCode) = execCmdEx(cmd)
   if exitCode == 0:
@@ -45,9 +53,10 @@ proc convertToJxl(inputPath: string, quality: int): tuple[success: bool,
 proc decodeJxlToTemp(jxlPath: string): tuple[success: bool, tempPath: string,
     message: string] =
   let tempDir = getTempDir()
-  let tempPath = tempDir / "nimfinder_preview_" & extractFilename(
-      jxlPath).changeFileExt(".png")
-  let cmd = "djxl " & quoteShell(jxlPath) & " " & quoteShell(tempPath)
+  # Use PID to avoid collisions between instances
+  let tempName = fmt"nimfinder_{getCurrentProcessId()}_{hash(jxlPath)}.png"
+  let tempPath = tempDir / tempName
+  let cmd = fmt"djxl {quoteShell(jxlPath)} {quoteShell(tempPath)}"
 
   let (output, exitCode) = execCmdEx(cmd)
   if exitCode == 0:
@@ -74,10 +83,12 @@ proc cleanup() =
 
 # Format file size nicely
 proc formatSize(bytes: BiggestInt): string =
-  if bytes > 1024*1024:
-    result = fmt"{bytes div (1024*1024)} MB"
-  elif bytes > 1024:
-    result = fmt"{bytes div 1024} KB"
+  const KB = 1024
+  const MB = KB * 1024
+  if bytes >= MB:
+    result = fmt"{bytes.float / MB.float:.1f} MB"
+  elif bytes >= KB:
+    result = fmt"{bytes.float / KB.float:.1f} KB"
   else:
     result = fmt"{bytes} bytes"
 
@@ -114,6 +125,11 @@ proc main() =
   let window = newWindow(AppTitle)
   window.width = 900
   window.height = 700
+
+  # Handle window close
+  window.onCloseClick = proc(event: CloseClickEvent) =
+    cleanup()
+    app.quit()
 
   # Main vertical layout
   let mainContainer = newLayoutContainer(Layout_Vertical)
@@ -197,7 +213,7 @@ proc main() =
   statusBar.spacing = 10
   mainContainer.add(statusBar)
 
-  let statusLabel = newLabel("Ready - Supports PNG, JPG, GIF, BMP. Open a JXL to view it.")
+  let statusLabel = newLabel("Ready - Supports PNG, JPG, GIF, BMP, WebP. Open a JXL to view it.")
   statusBar.add(statusLabel)
 
   # Helper to load and display an image
